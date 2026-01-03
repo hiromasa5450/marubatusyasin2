@@ -1,0 +1,753 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+  <title>オンライン三目並べ（2人）</title>
+  <style>
+    :root { --bg:#0f1115; --card:#171a21; --text:#e8e8ea; --muted:#a6a6ad; --accent:#7aa2f7; --danger:#ff6b6b; }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0; background:var(--bg); color:var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+      display:flex; justify-content:center; min-height:100vh;
+    }
+    .wrap{ width:min(560px, 100%); padding:16px; }
+    h1{ font-size:22px; margin:8px 0 12px; }
+    .card{ background:var(--card); border-radius:14px; padding:14px; margin:12px 0; box-shadow:0 8px 24px rgba(0,0,0,.25); }
+    .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .row > *{ flex:1; }
+    label{ display:block; font-size:12px; color:var(--muted); margin:6px 0; }
+    input{
+      width:100%; padding:12px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.08);
+      background:#0b0d11; color:var(--text); font-size:16px;
+      outline:none;
+    }
+    input::placeholder{ color:#6f7380; }
+    button{
+      padding:12px 12px; border-radius:12px; border:0; cursor:pointer;
+      background:rgba(255,255,255,.10); color:var(--text); font-size:16px; font-weight:700;
+      transition:transform .05s ease, background .15s ease;
+    }
+    button:active{ transform:scale(.98); }
+    button.primary{ background:var(--accent); color:#0b0d11; }
+    button.danger{ background:var(--danger); color:#0b0d11; }
+    button:disabled{ opacity:.45; cursor:not-allowed; }
+
+    .hint{ color:var(--muted); font-size:13px; line-height:1.5; }
+    .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    .sep{ height:1px; background:rgba(255,255,255,.08); margin:12px 0; }
+
+    .players{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .pbox{ border:1px solid rgba(255,255,255,.08); border-radius:12px; padding:10px; }
+    .pname{ font-weight:800; }
+    .badge{ display:inline-block; padding:4px 8px; border-radius:999px; background:rgba(255,255,255,.10); color:var(--muted); font-size:12px; margin-left:8px; }
+
+    .screen{ display:none; }
+    .screen.active{ display:block; }
+
+    .board{
+      display:grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap:10px;
+      margin-top:10px;
+    }
+    .cell{
+      aspect-ratio:1/1;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.10);
+      background:#0b0d11;
+      display:flex; align-items:center; justify-content:center;
+      font-size:48px; font-weight:900;
+      user-select:none;
+      touch-action:manipulation;
+    }
+    .cell.small{ font-size:42px; }
+    .cell.clickable{ outline:2px solid rgba(122,162,247,.35); }
+    .cell.disabled{ opacity:.65; }
+    .statusline{ font-size:14px; color:var(--muted); line-height:1.55; }
+    .statusbig{ font-size:18px; font-weight:800; margin-top:6px; }
+
+    .toast{ color:var(--danger); font-size:13px; margin-top:8px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>オンライン三目並べ（2人）</h1>
+
+  <!-- LOBBY -->
+  <div id="screenLobby" class="screen active">
+    <div class="card">
+      <label>名前（1〜12文字）</label>
+      <input id="nameInput" maxlength="12" placeholder="例：ヒロマ" />
+      <div class="sep"></div>
+
+      <div class="row">
+        <button id="btnCreate" class="primary">ルーム作成（3桁）</button>
+        <button id="btnJoin">参加</button>
+      </div>
+
+      <label style="margin-top:12px;">参加するルームID（3桁）</label>
+      <input id="roomInput" class="mono" maxlength="3" placeholder="例：042" inputmode="numeric" />
+      <div class="hint" style="margin-top:8px;">
+        友達に「ルームID」を伝えて、相手が同じIDに参加します。
+      </div>
+
+      <div id="lobbyToast" class="toast"></div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="align-items:flex-end;">
+        <div>
+          <div class="hint">現在のルーム</div>
+          <div id="roomCode" class="mono" style="font-size:26px; font-weight:900;">---</div>
+        </div>
+        <button id="btnLeave" class="danger" disabled>抜ける（この端末）</button>
+      </div>
+
+      <div class="sep"></div>
+
+      <div class="players">
+        <div class="pbox">
+          <div class="pname">p1（作成者）<span id="p1Ready" class="badge">未準備</span></div>
+          <div id="p1Name" class="hint">-</div>
+        </div>
+        <div class="pbox">
+          <div class="pname">p2<span id="p2Ready" class="badge">未参加</span></div>
+          <div id="p2Name" class="hint">-</div>
+        </div>
+      </div>
+
+      <div class="sep"></div>
+
+      <div class="row">
+        <button id="btnReady" class="primary" disabled>準備OK</button>
+        <button id="btnStart" disabled>開始（先手ランダム）</button>
+      </div>
+      <div class="hint" style="margin-top:8px;">
+        開始ボタンは p1 にだけ表示されます（p1固定のため）。
+      </div>
+    </div>
+  </div>
+
+  <!-- GAME -->
+  <div id="screenGame" class="screen">
+    <div class="card">
+      <div class="statusline">
+        ルームID：<span id="gameRoomCode" class="mono"></span><br>
+        あなた：<span id="meLabel"></span>（<span id="meMark"></span>） / 相手：<span id="opLabel"></span>（<span id="opMark"></span>）
+      </div>
+      <div id="turnText" class="statusbig">-</div>
+
+      <div id="board" class="board"></div>
+
+      <div class="sep"></div>
+
+      <div class="row">
+        <button id="btnReward" class="primary" disabled>報酬ゲット</button>
+        <button id="btnRematch" class="primary" disabled>再戦希望</button>
+        <button id="btnBackLobby" class="danger">ロビーに戻る（この端末）</button>
+      </div>
+
+      <div id="rewardArea" style="margin-top:10px;"></div>
+
+      <div class="hint" style="margin-top:8px;">
+        再戦は2人とも「再戦希望」を押すと自動的に開始します（先手は毎回ランダム）。
+      </div>
+
+      <div id="gameToast" class="toast"></div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  // Firebase v10 modular
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+  import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+  import {
+    getFirestore, doc, getDoc, setDoc, updateDoc,
+    onSnapshot, runTransaction
+  } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+  // 1) ここだけ差し替え
+  const firebaseConfig = {
+    apiKey: "AIzaSyAqPLGm8cBnv9PLUiK4g5DxdBsRgtjpw04",
+    authDomain: "hiroma-games.firebaseapp.com",
+    projectId: "hiroma-games",
+    storageBucket: "hiroma-games.firebasestorage.app",
+    messagingSenderId: "102709511894",
+    appId: "1:102709511894:web:c3df91e795be7d33c7eb77",
+    measurementId: "G-0C9M2984D2"
+  };
+
+  // ---------- util ----------
+  const $ = (id) => document.getElementById(id);
+  const screenLobby = $("screenLobby");
+  const screenGame  = $("screenGame");
+
+  const nameInput = $("nameInput");
+  const roomInput = $("roomInput");
+  const btnCreate = $("btnCreate");
+  const btnJoin   = $("btnJoin");
+
+  const roomCode = $("roomCode");
+  const btnLeave = $("btnLeave");
+  const p1Name = $("p1Name");
+  const p2Name = $("p2Name");
+  const p1Ready = $("p1Ready");
+  const p2Ready = $("p2Ready");
+  const btnReady = $("btnReady");
+  const btnStart = $("btnStart");
+  const lobbyToast = $("lobbyToast");
+
+  window.addEventListener("unhandledrejection", (ev) => {
+    console.error(ev.reason);
+    toast(lobbyToast, `${ev.reason?.code ?? ""} ${ev.reason?.message ?? ev.reason}`);
+  });
+
+  const gameRoomCode = $("gameRoomCode");
+  const meLabel = $("meLabel");
+  const opLabel = $("opLabel");
+  const meMark  = $("meMark");
+  const opMark  = $("opMark");
+  const turnText = $("turnText");
+  const boardEl = $("board");
+  const btnReward = $("btnReward");
+  const rewardArea = $("rewardArea");
+  const btnRematch = $("btnRematch");
+  const btnBackLobby = $("btnBackLobby");
+  const gameToast = $("gameToast");
+
+  const pad3 = (n) => String(n).padStart(3, "0");
+  const cleanRoomId = (s) => (s ?? "").replace(/[^0-9]/g, "").slice(0, 3);
+
+  // ---- Reward images (20枚) ----
+  // assets/rewards/001.jpg ～ 020.jpg を用意してね
+  const REWARD_IMAGES = Array.from({ length: 20 }, (_, i) => {
+    const n = String(i + 1).padStart(3, "0"); // 001..020
+    return `assets/rewards/${n}.jpg`;
+  });
+
+  function seededIndex(seed, mod) {
+    let h = 2166136261;
+    for (let i = 0; i < seed.length; i++) {
+      h ^= seed.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    h >>>= 0;
+    return h % mod;
+  }
+
+  function setScreen(which) {
+    screenLobby.classList.toggle("active", which === "lobby");
+    screenGame.classList.toggle("active", which === "game");
+  }
+
+  function toast(el, msg) {
+    el.textContent = msg || "";
+  }
+
+  function validName(s) {
+    const t = (s ?? "").trim();
+    return t.length >= 1 && t.length <= 12;
+  }
+
+  function calcWinner(board) {
+    // board: [null|"O"|"X"] length 9
+    const L = [
+      [0,1,2],[3,4,5],[6,7,8],
+      [0,3,6],[1,4,7],[2,5,8],
+      [0,4,8],[2,4,6]
+    ];
+    for (const [a,b,c] of L) {
+      if (board[a] && board[a] === board[b] && board[a] === board[c]) return board[a]; // "O" or "X"
+    }
+    if (board.every(v => v === "O" || v === "X")) return "DRAW";
+    return null;
+  }
+
+  // ---------- firebase ----------
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+
+  let myUid = null;
+  let myRoomId = null;
+  let myKey = null; // "p1" | "p2"
+  let unsub = null;
+
+  // 再戦オート開始の多重実行ガード
+  let resetInFlight = false;
+
+  async function ensureAuth() {
+    if (myUid) return;
+    await signInAnonymously(auth);
+    await new Promise((resolve) => {
+      const off = onAuthStateChanged(auth, (user) => {
+        if (user) {
+          myUid = user.uid;
+          off();
+          resolve();
+        }
+      });
+    });
+  }
+
+  function roomRef(roomId) {
+    return doc(db, "rooms", roomId);
+  }
+
+  function clearRoomLocal() {
+    myRoomId = null;
+    myKey = null;
+    roomCode.textContent = "---";
+    btnLeave.disabled = true;
+    btnReady.disabled = true;
+    btnStart.disabled = true;
+    btnRematch.disabled = true;
+
+    btnReward.disabled = true;
+    btnReward.style.display = "none";
+    btnReward.textContent = "報酬ゲット";
+    rewardArea.innerHTML = "";
+
+    toast(lobbyToast, "");
+    toast(gameToast, "");
+  }
+
+  function subscribeRoom(roomId) {
+    if (unsub) unsub();
+    myRoomId = roomId;
+    resetInFlight = false;
+
+    unsub = onSnapshot(roomRef(roomId), async (snap) => {
+      if (!snap.exists()) {
+        toast(lobbyToast, "ルームが見つかりません。");
+        clearRoomLocal();
+        setScreen("lobby");
+        return;
+      }
+      const data = snap.data();
+      renderRoom(data);
+
+      // RESULTで両者再戦希望なら自動リセット（どちらが実行してもOK）
+      if (data.status === "RESULT" && data.rematch?.p1 && data.rematch?.p2 && !resetInFlight) {
+        resetInFlight = true;
+        try { await resetGameTx(roomId); }
+        catch {}
+        finally { setTimeout(() => { resetInFlight = false; }, 800); }
+      }
+    });
+
+    btnLeave.disabled = false;
+  }
+
+  function renderRoom(r) {
+    const rid = myRoomId ?? "---";
+    roomCode.textContent = rid;
+    gameRoomCode.textContent = rid;
+
+    // players
+    p1Name.textContent = r.players?.p1?.name ?? "-";
+    p2Name.textContent = r.players?.p2?.name ?? "-";
+
+    const p1R = !!r.players?.p1?.ready;
+    const p2Uid = r.players?.p2?.uid ?? null;
+    const p2R = !!r.players?.p2?.ready;
+
+    p1Ready.textContent = p1R ? "準備OK" : "未準備";
+    p2Ready.textContent = p2Uid ? (p2R ? "準備OK" : "未準備") : "未参加";
+
+    // lobby buttons
+    const inLobby = (r.status === "LOBBY");
+    const bothPresent = !!p2Uid;
+    const bothReady = p1R && p2R && bothPresent;
+
+    btnReady.disabled = !inLobby || !myKey || (myKey === "p2" && !bothPresent) || (myKey === "p1" ? p1R : p2R);
+
+    // p1だけ開始ボタンを使える
+    btnStart.style.display = (myKey === "p1") ? "inline-block" : "none";
+    btnStart.disabled = !inLobby || !bothReady;
+
+    // LOBBY のときは報酬UIを消す
+    if (inLobby) {
+      btnReward.style.display = "none";
+      btnReward.disabled = true;
+      btnReward.textContent = "報酬ゲット";
+      rewardArea.innerHTML = "";
+      setScreen("lobby");
+      return;
+    }
+
+    setScreen("game");
+
+    // labels
+    const opKey = myKey === "p1" ? "p2" : "p1";
+    const myName = r.players?.[myKey]?.name ?? "(自分)";
+    const opName = r.players?.[opKey]?.name ?? "(相手)";
+
+    const myM = r.marks?.[myKey] ?? "-";
+    const opM = r.marks?.[opKey] ?? "-";
+
+    meLabel.textContent = myName;
+    opLabel.textContent = opName;
+    meMark.textContent = myM;
+    opMark.textContent = opM;
+
+    // status text
+    const turn = r.turn;
+    const turnName = (turn && r.players?.[turn]?.name) ? r.players[turn].name : "-";
+    if (r.status === "PLAYING") {
+      turnText.textContent = `${turnName} の番`;
+    } else {
+      // RESULT
+      if (r.winner === "DRAW") turnText.textContent = "引き分け";
+      else if (r.winner === "p1" || r.winner === "p2") {
+        const winName = r.players?.[r.winner]?.name ?? "-";
+        turnText.textContent = `${winName} の勝ち`;
+      } else {
+        turnText.textContent = "結果";
+      }
+    }
+
+    // board
+    drawBoard(r.board ?? Array(9).fill(null), r);
+
+    // rematch button enabled only in RESULT
+    btnRematch.disabled = !(r.status === "RESULT") || !myKey || !!r.rematch?.[myKey];
+    btnRematch.textContent = (r.rematch?.[myKey] ? "再戦希望済み" : "再戦希望");
+
+    // ---- Reward 表示/制御 ----
+    const reward = r.reward ?? { claimedBy: null, image: null };
+    const iAmWinner = (r.status === "RESULT" && r.winner === myKey); // DRAWはここで弾かれる
+    const canClaim = iAmWinner && !reward.image;
+
+    btnReward.style.display = iAmWinner ? "inline-block" : "none";
+    btnReward.disabled = !canClaim;
+    btnReward.textContent = reward.image ? "獲得済み" : "報酬ゲット";
+
+    if (reward.image) {
+      rewardArea.innerHTML = `
+        <div class="hint">あなたの報酬画像</div>
+        <img src="${reward.image}" style="width:100%;border-radius:12px;margin-top:8px;" />
+      `;
+    } else {
+      rewardArea.innerHTML = "";
+    }
+  }
+
+  function drawBoard(board, r) {
+    boardEl.innerHTML = "";
+    const canPlay = (r.status === "PLAYING" && r.turn === myKey);
+    for (let i = 0; i < 9; i++) {
+      const v = board[i];
+      const d = document.createElement("div");
+      d.className = "cell" + (v ? " disabled" : "");
+      d.textContent = v ? v : "";
+      if (!v && canPlay) d.classList.add("clickable");
+      if (!canPlay) d.classList.add("disabled");
+      d.addEventListener("click", async () => {
+        if (!myRoomId || !myKey) return;
+        if (r.status !== "PLAYING") return;
+        if (r.turn !== myKey) return;
+        if (board[i] !== null) return;
+        toast(gameToast, "");
+        try {
+          await moveTx(myRoomId, i);
+        } catch (e) {
+          toast(gameToast, "置けませんでした（同時操作や手番のズレの可能性）");
+        }
+      }, { passive: true });
+      boardEl.appendChild(d);
+    }
+  }
+
+  // ---------- transactions ----------
+  async function createRoom() {
+    await ensureAuth();
+    const name = nameInput.value.trim();
+    if (!validName(name)) { toast(lobbyToast, "名前を1〜12文字で入力してください。"); return; }
+
+    toast(lobbyToast, "");
+
+    for (let tries = 0; tries < 20; tries++) {
+      const id = pad3(Math.floor(Math.random() * 1000));
+      const ref = roomRef(id);
+      const snap = await getDoc(ref);
+      if (snap.exists()) continue;
+
+      await setDoc(ref, {
+        status: "LOBBY",
+        players: {
+          p1: { uid: myUid, name, ready: false },
+          p2: { uid: null,  name: null, ready: false },
+        },
+        marks: { p1: null, p2: null },
+        turn: null,
+        board: Array(9).fill(null),
+        winner: null,
+        rematch: { p1: false, p2: false },
+        reward: { claimedBy: null, image: null }
+      });
+
+      myKey = "p1";
+      subscribeRoom(id);
+      roomInput.value = id;
+      return;
+    }
+    toast(lobbyToast, "混雑しています。もう一度試してください。");
+  }
+
+  async function joinRoom() {
+    await ensureAuth();
+    const name = nameInput.value.trim();
+    if (!validName(name)) { toast(lobbyToast, "名前を1〜12文字で入力してください。"); return; }
+
+    const id = cleanRoomId(roomInput.value);
+    if (id.length !== 3) { toast(lobbyToast, "ルームIDは3桁の数字です。"); return; }
+
+    toast(lobbyToast, "");
+
+    await runTransaction(db, async (tx) => {
+      const ref = roomRef(id);
+      const snap = await tx.get(ref);
+      if (!snap.exists()) throw new Error("notfound");
+      const r = snap.data();
+
+      if (r.status !== "LOBBY") throw new Error("notlobby");
+      if (r.players?.p2?.uid) throw new Error("full");
+      if (r.players?.p1?.uid === myUid) throw new Error("same");
+
+      tx.update(ref, {
+        "players.p2.uid": myUid,
+        "players.p2.name": name,
+        "players.p2.ready": false
+      });
+    });
+
+    myKey = "p2";
+    subscribeRoom(id);
+  }
+
+  async function setReadyTx() {
+    if (!myRoomId || !myKey) return;
+    await runTransaction(db, async (tx) => {
+      const ref = roomRef(myRoomId);
+      const snap = await tx.get(ref);
+      if (!snap.exists()) throw new Error("notfound");
+      const r = snap.data();
+      if (r.status !== "LOBBY") throw new Error("notlobby");
+
+      const path = `players.${myKey}.ready`;
+      if (r.players?.[myKey]?.ready) return;
+      tx.update(ref, { [path]: true });
+    });
+  }
+
+  async function startGameTx() {
+    if (!myRoomId || myKey !== "p1") return;
+
+    await runTransaction(db, async (tx) => {
+      const ref = roomRef(myRoomId);
+      const snap = await tx.get(ref);
+      if (!snap.exists()) throw new Error("notfound");
+      const r = snap.data();
+
+      if (r.status !== "LOBBY") throw new Error("notlobby");
+      if (!r.players?.p2?.uid) throw new Error("needp2");
+      if (!r.players?.p1?.ready || !r.players?.p2?.ready) throw new Error("needready");
+      if (r.marks?.p1 || r.marks?.p2) throw new Error("started");
+
+      const first = Math.random() < 0.5 ? "p1" : "p2";
+      const marks = (first === "p1") ? { p1: "O", p2: "X" } : { p1: "X", p2: "O" };
+
+      tx.update(ref, {
+        status: "PLAYING",
+        board: Array(9).fill(null),
+        winner: null,
+        rematch: { p1: false, p2: false },
+        reward: { claimedBy: null, image: null },
+        marks,
+        turn: first
+      });
+    });
+  }
+
+  async function moveTx(roomId, idx) {
+    await runTransaction(db, async (tx) => {
+      const ref = roomRef(roomId);
+      const snap = await tx.get(ref);
+      if (!snap.exists()) throw new Error("notfound");
+      const r = snap.data();
+
+      if (r.status !== "PLAYING") throw new Error("notplaying");
+      if (!myKey || r.turn !== myKey) throw new Error("notturn");
+
+      const b = Array.isArray(r.board) ? [...r.board] : Array(9).fill(null);
+      if (b[idx] !== null) throw new Error("occupied");
+
+      const mark = r.marks?.[myKey];
+      if (mark !== "O" && mark !== "X") throw new Error("nomark");
+
+      b[idx] = mark;
+
+      const w = calcWinner(b);
+      if (w === null) {
+        const next = (myKey === "p1") ? "p2" : "p1";
+        tx.update(ref, { board: b, turn: next });
+        return;
+      }
+
+      // game over
+      let winner = null;
+      if (w === "DRAW") winner = "DRAW";
+      else {
+        // "O" or "X" -> p1/p2
+        winner = (r.marks?.p1 === w) ? "p1" : "p2";
+      }
+      tx.update(ref, { board: b, status: "RESULT", winner: winner });
+    });
+  }
+
+  async function claimRewardTx(roomId) {
+    if (!myKey) throw new Error("no myKey");
+
+    await runTransaction(db, async (tx) => {
+      const ref = roomRef(roomId);
+      const snap = await tx.get(ref);
+      if (!snap.exists()) throw new Error("notfound");
+
+      const r = snap.data();
+
+      // 結果確定してる？
+      if (r.status !== "RESULT") throw new Error("notresult");
+
+      // 引き分けは報酬なし（欲しければここを変える）
+      if (r.winner !== "p1" && r.winner !== "p2") throw new Error("nowinner");
+
+      // 勝者のみ
+      if (r.winner !== myKey) throw new Error("notwinner");
+
+      const reward = r.reward ?? { claimedBy: null, image: null };
+
+      // すでに確定済みなら何もしない
+      if (reward.image) return;
+
+      // ルームID＋勝者で固定（リロードしても同じになりやすい）
+      const idx = seededIndex(`${roomId}_${r.winner}`, REWARD_IMAGES.length);
+      const image = REWARD_IMAGES[idx];
+
+      tx.update(ref, {
+        reward: { claimedBy: myKey, image }
+      });
+    });
+  }
+
+  async function rematchTx() {
+    if (!myRoomId || !myKey) return;
+    await updateDoc(roomRef(myRoomId), { [`rematch.${myKey}`]: true });
+  }
+
+  async function resetGameTx(roomId) {
+    await runTransaction(db, async (tx) => {
+      const ref = roomRef(roomId);
+      const snap = await tx.get(ref);
+      if (!snap.exists()) throw new Error("notfound");
+      const r = snap.data();
+      if (r.status !== "RESULT") throw new Error("notresult");
+      if (!(r.rematch?.p1 && r.rematch?.p2)) throw new Error("notboth");
+
+      const first = Math.random() < 0.5 ? "p1" : "p2";
+      const marks = (first === "p1") ? { p1: "O", p2: "X" } : { p1: "X", p2: "O" };
+
+      tx.update(ref, {
+        status: "PLAYING",
+        board: Array(9).fill(null),
+        winner: null,
+        rematch: { p1: false, p2: false },
+        reward: { claimedBy: null, image: null },
+        marks,
+        turn: first
+      });
+    });
+  }
+
+  // ---------- UI events ----------
+  btnCreate.addEventListener("click", async () => {
+    try { await createRoom(); }
+    catch (e) {
+      console.error(e);
+      toast(lobbyToast, `${e?.code ?? ""} ${e?.message ?? e}`);
+    }
+  });
+
+  btnJoin.addEventListener("click", async () => {
+    try { await joinRoom(); }
+    catch (e) {
+      console.error(e);
+      toast(lobbyToast, `${e?.code ?? ""} ${e?.message ?? e}`);
+    }
+  });
+
+  roomInput.addEventListener("input", () => {
+    const v = cleanRoomId(roomInput.value);
+    roomInput.value = v;
+  });
+
+  btnReady.addEventListener("click", async () => {
+    toast(lobbyToast, "");
+    try { await setReadyTx(); }
+    catch { toast(lobbyToast, "準備OKにできませんでした。"); }
+  });
+
+  btnStart.addEventListener("click", async () => {
+    toast(lobbyToast, "");
+    try { await startGameTx(); }
+    catch { toast(lobbyToast, "開始できませんでした（相手が未準備など）。"); }
+  });
+
+  btnReward.addEventListener("click", async () => {
+    if (!myRoomId) return;
+
+    toast(gameToast, "");
+    btnReward.disabled = true;
+    btnReward.textContent = "獲得中...";
+
+    try {
+      await claimRewardTx(myRoomId);
+      // 成功したら onSnapshot→renderRoom で表示される
+    } catch (e) {
+      console.error(e);
+      toast(gameToast, "報酬を獲得できませんでした。");
+      btnReward.disabled = false;
+      btnReward.textContent = "報酬ゲット";
+    }
+  });
+
+  btnRematch.addEventListener("click", async () => {
+    toast(gameToast, "");
+    try { await rematchTx(); }
+    catch { toast(gameToast, "再戦希望を送れませんでした。"); }
+  });
+
+  btnBackLobby.addEventListener("click", () => {
+    // 端末側だけ戻る（ルーム自体は残る）
+    if (unsub) unsub();
+    unsub = null;
+    clearRoomLocal();
+    setScreen("lobby");
+  });
+
+  btnLeave.addEventListener("click", () => {
+    // 端末側だけ離脱。ルームを壊さない（友達用途だとこれが安全）
+    if (unsub) unsub();
+    unsub = null;
+    clearRoomLocal();
+    setScreen("lobby");
+  });
+
+  // auth start
+  await ensureAuth();
+</script>
+</body>
+</html>
